@@ -21,33 +21,42 @@ contract Bank {
     event BannedLog(address indexed wallet, bool status);
 
     mapping(address => uint256) public balances;
-    mapping(address => bool) public banned_list;
+    address[] public banned_list;
+
+    modifier notBanned() {
+        bool isBanned = false;
+        for (uint256 i = 0; i < banned_list.length; i++) {
+            if (banned_list[i] == msg.sender) {
+                isBanned = true;
+                break;
+            }
+        }
+        require(isBanned, "You are banned from using this service.");
+        _;
+    }
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Unatherized action..");
         _;
     }
 
-    modifier validateTransaction(address payable _receiver) {
-        require(msg.sender != _receiver, "You cannot send to yourself.");
-        require(msg.value > 0, "Invalid Amount.");
-
+    modifier IsValidAmount() {
         // check limits
+        require(msg.value > 0, "Invalid Amount.");
         require(
             msg.value >= LOWER_LIMIT && msg.value <= UPPER_LIMIT,
             "Amount not within limits."
         );
+        _;
+    }
+
+    modifier validateTransaction(address payable _receiver) {
+        require(msg.sender != _receiver, "You cannot send to yourself.");
 
         // check if current balance is wallet
         require(
             balances[msg.sender] >= msg.value,
             "You don't have enough balance."
-        );
-
-        // check if user is not banned
-        require(
-            (banned_list[msg.sender] && banned_list[msg.sender] == true),
-            "You Are banned from using this service. get in touch to learn more.."
         );
         _;
     }
@@ -78,16 +87,29 @@ contract Bank {
     }
 
     function ban_user(address _address) public payable onlyOwner {
-        banned_list[_address] = true;
+        banned_list.push(_address);
         emit BannedLog(_address, true);
     }
 
     function unban_user(address _address) public payable onlyOwner {
-        banned_list[_address] = false;
-        emit BannedLog(_address, false);
+        for (uint256 i = 0; i < banned_list.length; i++) {
+            // if auth address is in the banned list then remove it
+            if (banned_list[i] == msg.sender) {
+                banned_list[i] = banned_list[banned_list.length - 1];
+                banned_list.pop();
+                emit BannedLog(_address, false);
+                break;
+            }
+        }
     }
 
-    function deposit() public payable returns (uint256) {
+    function deposit()
+        public
+        payable
+        notBanned
+        IsValidAmount
+        returns (uint256)
+    {
         require(msg.value > 0, "Invalid Amount.");
 
         // cut the fee and send it to owner
@@ -116,12 +138,18 @@ contract Bank {
         public
         payable
         validateTransaction(_reciver)
+        notBanned
+        IsValidAmount
         returns (uint256)
     {
-        balances[msg.sender] -= msg.value;
-        _reciver.transfer(msg.value);
-        balances[_reciver] += msg.value;
+        uint256 fee = (msg.value * TRANSACTION_FEE) / 100;
+        uint256 balance_after_fee = msg.value - fee;
+        balances[msg.sender] -= balance_after_fee;
+
+        _reciver.transfer(balance_after_fee);
+
         emit transactionLog(msg.sender, _reciver, msg.value);
+
         return balances[msg.sender];
     }
 }
